@@ -61,7 +61,7 @@ def main():
     if mega is None:
         return
 
-    # Specify the target Mega folder (replace 'your_folder' with the desired folder name)
+    # Specify the target Mega folder ('your_folder' placeholder)
     target_folder_name = 'your_folder'
     folders = mega.get_folders()
     target_folder = None
